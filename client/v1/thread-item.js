@@ -28,14 +28,14 @@ ThreadItem.prototype.parseParams = function (json) {
     }
     if (hash.type == "media_share") {
         hash.type = 'mediaShare';
-        this.mediaShare = new Media(this.session, json.media_share)
+        hash.mediaShare = new Media(this.session, json.media_share)
     }
     if (hash.type == "action_log") {
         hash.type = 'actionLog';
         hash.actionLog = json.action_log;
     }
     if (hash.type == "profile") {
-        this.profile = new Account(this.session, json.profile);
+        hash.profile = new Account(this.session, json.profile);
         hash.profileMediaPreview = _.map(json.preview_medias || [], function (medium) {
             return {
                 id: medium.id.toString(),
@@ -49,10 +49,10 @@ ThreadItem.prototype.parseParams = function (json) {
         location.location = json.location;
         location.title = location.name;
         location.subtitle = null;
-        this.location = new Location(this.session, location);
+        hash.location = new Location(this.session, location);
     }
     if (hash.type == "hashtag") {
-        this.hashtag = new Hashtag(this.session, json.hashtag);
+        hash.hashtag = new Hashtag(this.session, json.hashtag);
     }
     hash.accountId = json.user_id;
     hash.created = parseInt(json.timestamp / 1000);
@@ -63,12 +63,12 @@ ThreadItem.prototype.parseParams = function (json) {
 ThreadItem.prototype.getParams = function() {
     var params = _.clone(this._params);
     if(params.type == 'mediaShare')
-        params.mediaShare = this.mediaShare.params;
+        params.mediaShare = this._params.mediaShare.params;
     if(params.type == 'profile')
-        params.profile = this.profile.params;
+        params.profile = this._params.profile.params;
     if(params.type == 'location')
-        params.location = this.location.params;
+        params.location = this._params.location.params;
     if(params.type == 'hashtag')
-        params.hashtag = this.hashtag.params;
+        params.hashtag = this._params.hashtag.params;
     return params;
 }

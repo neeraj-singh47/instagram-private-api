@@ -1,20 +1,28 @@
 var _ = require('underscore');
-var util = require('util');
-var FeedBase = require('./feed-base');
 
 function InboxPendingFeed(session, limit) {
-    this.limit = parseInt(limit) || null;
-    this.pendingRequestsTotal = null;
-    FeedBase.apply(this, arguments);
+    this.session = session;
+    this.limit = limit;
 }
-util.inherits(InboxPendingFeed, FeedBase);
 
 module.exports = InboxPendingFeed;
+
 var Thread = require('../thread');
 var Request = require('../request');
 
-InboxPendingFeed.prototype.getPendingRequestsTotal = function () {
-    return this.pendingRequestsTotal;
+
+InboxPendingFeed.prototype.setMaxId = function (maxId) {
+    this.lastMaxId = maxId;
+};
+
+
+InboxPendingFeed.prototype.getMaxId = function () {
+    return this.lastMaxId;
+};
+
+
+InboxPendingFeed.prototype.isMoreAvailable = function () {
+    return this.moreAvailable;
 };
 
 
@@ -22,17 +30,32 @@ InboxPendingFeed.prototype.get = function () {
     var that = this;
     return new Request(this.session)
         .setMethod('GET')
-        .setResource('inboxPending', {
-            maxId: this.getCursor()
+        .setResource('threadsPending', {
+            maxId: this.getMaxId()
         })
         .send()
         .then(function(json) {
-            that.moreAvailable = json.inbox.has_older;
-            that.pendingRequestsTotal = json.pending_requests_total;
+            that.moreAvailable = json.inbox.more_available && json.inbox.next_max_id;
             if (that.moreAvailable)
-                that.setCursor(json.inbox.oldest_cursor.toString());
+                that.setMaxId(json.inbox.next_max_id);
             return _.map(json.inbox.threads, function (thread) {
                 return new Thread(that.session, thread);
             })
         })
+};
+
+
+InboxPendingFeed.prototype.all = function () {
+    var that = this;
+    return this.get().then(function (threads) {
+        that.allThreads = that.allThreads.concat(threads);
+        var exceedLimit = false;
+        if (that.limit && that.allThreads.length > that.limit)
+            exceedLimit = true;
+        if (that.moreAvailable && !exceedLimit) {
+            return that.all();
+        } else {
+            return that.allThreads;
+        }
+    })
 };

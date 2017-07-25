@@ -1,17 +1,28 @@
 var _ = require('underscore');
-var util = require('util');
-var FeedBase = require('./feed-base');
 
-function SelfLikedFeed(session, limit) {
+function SelfLikedFeed(session) {
     this.session = session;
-    this.limit = parseInt(limit) || null;
-    FeedBase.apply(this, arguments);
 }
-util.inherits(SelfLikedFeed, FeedBase);
 
 module.exports = SelfLikedFeed;
 var Media = require('../media');
 var Request = require('../request');
+var Helpers = require('../../../helpers');
+var Exceptions = require('../exceptions');
+
+SelfLikedFeed.prototype.setMaxId = function (maxId) {
+    this.lastMaxId = maxId;
+};
+
+
+SelfLikedFeed.prototype.getMaxId = function () {
+    return this.lastMaxId;
+};
+
+
+SelfLikedFeed.prototype.isMoreAvailable = function () {
+    return this.moreAvailable;
+};
 
 
 SelfLikedFeed.prototype.get = function () {
@@ -19,14 +30,14 @@ SelfLikedFeed.prototype.get = function () {
     return new Request(that.session)
         .setMethod('GET')
         .setResource('selfLikedFeed', {
-            maxId: that.getCursor()
+            maxId: that.getMaxId()
         })
         .send()
         .then(function(data) {
             var nextMaxId = data.next_max_id ? data.next_max_id.toString() : data.next_max_id;
             that.moreAvailable = data.more_available && !!nextMaxId;
             if (that.moreAvailable)
-                that.setCursor(nextMaxId);
+                that.setMaxId(nextMaxId);
             return _.map(data.items, function (medium) {
                 return new Media(that.session, medium);
             });

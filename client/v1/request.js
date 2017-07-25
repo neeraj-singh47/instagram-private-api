@@ -1,10 +1,6 @@
 var _ = require("underscore");
 var Promise = require("bluebird");
 var request = require('request-promise');
-var JSONbig = require('json-bigint');
-var Agent = require('socks5-https-client/lib/Agent');
-
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
 function Request(session) {
     this._id = _.uniqueId();
@@ -17,7 +13,7 @@ function Request(session) {
     this._request.options = {
         gzip: true 
     };
-    this._request.headers=_.extend({},Request.defaultHeaders);
+    this._request.headers = Request.defaultHeaders;
     this.attemps = 2;
     if(session) {
         this.session = session;            
@@ -36,42 +32,31 @@ var Device = require('./device');
 var Exceptions = require('./exceptions');
 var routes = require('./routes');
 var Helpers = require('../../helpers');
+var JSONbig = require('json-bigint');
 var CONSTANTS = require('./constants');
-var Session = require('./session');
 
 Request.defaultHeaders = {
     'X-IG-Connection-Type': 'WIFI',
-    'X-IG-Capabilities': '3QI=',
+    'X-IG-Capabilities': 'HQ==',
     'Accept-Language': 'en-US',
     'Host': CONSTANTS.HOSTNAME,
     'Accept': '*/*',
-    'Accept-Encoding': 'gzip, deflate, sdch',
+    'Accept-Encoding': 'gzip, deflate',
     'Connection': 'Close'
 };
 
 
 Request.requestClient = request.defaults({});
 
-Request.setTimeout = function (ms) {
-    var object = { 'timeout': parseInt(ms) };
-    Request.requestClient = request.defaults(object);
-}
 
 Request.setProxy = function (proxyUrl) {
     if(!Helpers.isValidUrl(proxyUrl))
         throw new Error("`proxyUrl` argument is not an valid url")
     var object = { 'proxy': proxyUrl };    
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
     Request.requestClient = request.defaults(object);
 }
 
-Request.setSocks5Proxy = function (host, port) {
-    var object = { agentClass: Agent,
-    agentOptions: {
-        socksHost: host, // Defaults to 'localhost'.
-        socksPort: port // Defaults to 1080.
-    }};
-    Request.requestClient = request.defaults(object);
-}
 
 Object.defineProperty(Request.prototype, "session", {
     get: function() { 
@@ -147,8 +132,8 @@ Request.prototype.setData = function(data, override) {
 
 
 Request.prototype.setBodyType = function(type) {
-    if(!_.contains(['form', 'formData', 'json', 'body'], type))
-        throw new Error("`bodyType` param must be and form, formData, json or body")
+    if(!_.contains(['form', 'formData', 'json'], type))
+        throw new Error("`bodyType` param must be and form, formData or json")
     this._request.bodyType = type;
     return this;
 };
@@ -182,12 +167,6 @@ Request.prototype.setHeaders = function(headers) {
 };
 
 
-Request.prototype.removeHeader = function(name) {
-    delete this._request.headers[name];
-    return this;
-};
-
-
 Request.prototype.setUrl = function(url) {
     if(!_.isString(url) || !Helpers.isValidUrl(url))
         throw new Error("The `url` parametr must be valid url string");
@@ -209,19 +188,14 @@ Request.prototype.setLocalAddress = function(ipAddress) {
 };
 
 
-Request.prototype.setCSRFToken = function(token) {
-    this.setData({
-        _csrftoken: token,
-    });
-    return this;
-};
-
-
 Request.prototype.setSession = function(session) {
+    var Session = require('./session');
     if(!(session instanceof Session))
         throw new Error("`session` parametr must be instance of `Session`")
     this._session = session;
-    this.setCSRFToken(session.CSRFToken);
+    this.setData({
+        _csrftoken: session.CSRFToken,
+    });
     this.setOptions({
         jar: session.jar
     });
@@ -251,7 +225,7 @@ Request.prototype.signData = function () {
     var that = this;
     if(!_.contains(['POST', 'PUT', 'PATCH', 'DELETE'], this._request.method))
         throw new Error("Wrong request method for signing data!");
-    return signatures.sign(this._request.data)
+    return signatures.sign(this._request.data, this.session)
         .then(function (data) {
             that.setHeaders({
                 'User-Agent': that.device.userAgent(data.appVersion)
@@ -296,11 +270,6 @@ Request.prototype._mergeOptions = function(options) {
 
 
 Request.prototype.parseMiddleware = function (response) {
-    if(response.req._headers.host==='upload.instagram.com' && response.statusCode===201){
-        var loaded = /(\d+)-(\d+)\/(\d+)/.exec(response.body);
-        response.body = {status:"ok",start:loaded[1],end:loaded[2],total:loaded[3]};
-        return response;
-    }
     try {
         response.body = JSONbig.parse(response.body);
         return response;
@@ -316,12 +285,10 @@ Request.prototype.errorMiddleware = function (response) {
     if (json.spam)
         throw new Exceptions.ActionSpamError(json);
     if (json.message == 'checkpoint_required')
-        throw new Exceptions.CheckpointError(json, this.session);
+        throw new Exceptions.CheckpointError(json);
     if (json.message == 'login_required')
         throw new Exceptions.AuthenticationError("Login required to process this request");
-    if (json.error_type == 'sentry_block')
-        throw new Exceptions.SentryBlockError(json);
-    if (response.statusCode===429 || _.isString(json.message) && json.message.toLowerCase().indexOf('too many requests') !== -1)
+    if (_.isString(json.message) && json.message.toLowerCase().indexOf('too many requests') !== -1) 
         throw new Exceptions.RequestsLimitError();
     if (_.isString(json.message) && json.message.toLowerCase().indexOf('not authorized to view user') !== -1) 
         throw new Exceptions.PrivateUserError();
@@ -365,8 +332,6 @@ Request.prototype.send = function (options, attemps) {
             var json = response.body;
             if (_.isObject(json) && json.status == "ok")
                 return _.omit(response.body, 'status');
-            if (_.isString(json.message) && json.message.toLowerCase().indexOf('transcode timeout') !== -1)
-                throw new Exceptions.TranscodeTimeoutError();
             throw new Exceptions.RequestError(json);
         })
         .catch(function(error) {
@@ -379,7 +344,7 @@ Request.prototype.send = function (options, attemps) {
                 throw err;    
             var response = err.response;
             if (response.statusCode == 404)
-                throw new Exceptions.NotFoundError(response);
+                throw new Exceptions.NotFoundError();
             if (response.statusCode >= 500) {
                 if (attemps <= that.attemps) {
                     attemps += 1;

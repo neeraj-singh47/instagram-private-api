@@ -1,18 +1,27 @@
 var _ = require('underscore');
-var util = require('util');
-var FeedBase = require('./feed-base');
 
-function AccountFollowersFeed(session, accountId, limit) {
+function AccountFollowersFeed(session, accountId) {
+    this.lastMaxId = null;
     this.accountId = accountId;
-    this.limit = limit || Infinity;
-    this.timeout = 10 * 60 * 1000;
-    FeedBase.apply(this, arguments);
+    this.session = session;
 }
-util.inherits(AccountFollowersFeed, FeedBase);
 
 module.exports = AccountFollowersFeed;
 var Request = require('../request');
+var Helpers = require('../../../helpers');
 var Account = require('../account');
+
+AccountFollowersFeed.prototype.setMaxId = function (maxId) {
+    this.lastMaxId = maxId;
+};
+
+AccountFollowersFeed.prototype.getMaxId = function () {
+    return this.lastMaxId;
+};
+
+AccountFollowersFeed.prototype.isMoreAvailable = function() {
+    return !!this.lastMaxId;
+};
 
 AccountFollowersFeed.prototype.get = function () {
     var that = this;
@@ -20,14 +29,12 @@ AccountFollowersFeed.prototype.get = function () {
         .setMethod('GET')
         .setResource('followersFeed', {
             id: that.accountId,
-            maxId: that.cursor
+            maxId: that.lastMaxId
         })
         .send()
         .then(function(data) {
-            that.moreAvailable = !!data.next_max_id;
-            if (that.moreAvailable) {
-                that.setCursor(data.next_max_id);
-            }
+            if (data.next_max_id)
+                that.setMaxId(data.next_max_id);
             return _.map(data.users, function (user) {
                 return new Account(that.session, user);
             });

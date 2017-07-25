@@ -17,6 +17,7 @@ util.inherits(Account, Resource);
 
 module.exports = Account;
 var Exceptions = require('./exceptions');
+var AccountSearchFeed = require('./feeds/account-search');
 var Session = require('./session');
 var QE = require('./qe');
 var Relationship = require('./relationship');
@@ -31,18 +32,11 @@ Account.prototype.parseParams = function (json) {
     hash.id = json.pk || json.id || json.instagram_id;
     hash.isPrivate = json.is_private;
     hash.hasAnonymousProfilePicture = json.has_anonymous_profile_picture;
-    hash.isBusiness = !!json.is_business;
-    hash.isVerified = !!json.is_verified;
-    if(_.isString(json.profile_pic_id))
-        hash.profilePicId = json.profile_pic_id;
-    if(_.isString(json.byline))
-        hash.byLine = json.byline;
-    if(_.isNumber(json.usertags_count))
-        hash.usertagsCount = json.usertags_count;
     if(_.isNumber(json.following_count))
-        hash.followingCount = json.following_count;
+        hash.followingsCount = json.following_count;
     if(_.isNumber(json.follower_count))
-        hash.followerCount = json.follower_count;
+        hash.followersCount = json.follower_count;
+    hash.isBusiness = !!json.is_business;
     if(_.isString(json.biography))
         hash.biography = json.biography;
     if(_.isNumber(json.media_count))    
@@ -55,6 +49,9 @@ Account.prototype.parseParams = function (json) {
 };
 
 
+// This is really tight on request limits
+// If you need to refresh profile a lot use
+// getByIdLimited
 Account.getById = function (session, id) {
     return new Request(session)
         .setMethod('GET')
@@ -76,28 +73,9 @@ Account.prototype.update = function () {
 };  
 
 
-Account.search = function (session, username) {
-    return session.getAccountId()
-        .then(function(id) {
-            var rankToken = Helpers.buildRankToken(id);
-            return new Request(session)
-                .setMethod('GET')
-                .setResource('accountsSearch', {
-                    query: username,
-                    rankToken: rankToken
-                })
-                .send();
-        })
-        .then(function(data) {
-            return _.map(data.users, function (user) {
-                return new Account(session, user);
-            });
-        })    
-};
-
-
 Account.searchForUser = function (session, username) {
-    return Account.search(session, username)
+    return new AccountSearchFeed(session, username)
+        .get()
         .then(function(accounts) {
             var account = _.find(accounts, function(account) {
                 return account.params.username === username;    
@@ -107,6 +85,89 @@ Account.searchForUser = function (session, username) {
             return account;    
         })        
 };
+
+
+Account.search = function (session, username) {
+    return new AccountSearchFeed(session, username)
+        .get()
+        .then(function(accounts) {
+            return accounts;
+        })        
+};
+
+
+Account.checkUsername = function (device, username) {
+    return new Request()
+        .setMethod('POST')
+        .setDevice(device)
+        .setResource('checkUsername')
+        .setData({username: username})
+        .signPayload()
+        .send();
+};
+
+
+Account.checkEmail = function (device, email) {
+    return new Request()
+        .setMethod('POST')
+        .setDevice(device)
+        .setResource('checkEmail')
+        .setData({
+            email: email,
+            qe_id: Helpers.generateUUID()
+        })
+        .signPayload()
+        .send();     
+};
+
+
+Account._create = function(session, email, username, password, name) {
+    var uuid = Helpers.generateUUID();
+    var guid = Helpers.generateUUID();
+    return new Request(session)
+        .setMethod('POST')
+        .setResource('registration')
+        .setData({
+            phone_id: uuid,
+            username: username,
+            first_name: name,
+            guid: guid,
+            email: email,
+            force_sign_up_code: "",
+            qs_stamp: "",
+            password: password
+        })
+        .signPayload()
+        .send()
+        .then(function(json) {
+            if(!json.account_created)
+                throw new Exceptions.RegistrationError(json.errors);
+            return new Account(session, json.account_created);    
+        })
+};
+
+
+Account.create = function (session, email, username, password, name) {
+    return Account._create(session, email, username, password, name)
+        .then(function (account) {
+            return [account, QE.sync(session)];
+        })
+        .spread(function (account) {
+            var autocomplete = Relationship.autocompleteUserList(session)
+                .catch(Exceptions.RequestsLimitError, function() {
+                    // autocompleteUserList has ability to fail often
+                    return false;
+                })
+            return [account, autocomplete];
+        })
+        .spread(function (account) {
+            return [account, Thread.recentRecipients(session)];
+        })
+        .spread(function (account) {
+            return [account, discover(session, true)];
+        })
+}
+
 
 
 Account.setProfilePicture = function (session, streamOrPath) {
@@ -143,10 +204,10 @@ Account.prototype.setProfilePicture = function(streamOrPath) {
 };
 
 
-Account.setPrivacy = function (session, pri) {
+Account.setPrivacy = function (session, private) {
     return new Request(session)
         .setMethod('POST')
-        .setResource(pri ? 'setAccountPrivate' : 'setAccountPublic')                    
+        .setResource(private ? 'setAccountPrivate' : 'setAccountPublic')                    
         .generateUUID()
         .signPayload()
         .send()
@@ -156,9 +217,9 @@ Account.setPrivacy = function (session, pri) {
 };
 
 
-Account.prototype.setPrivacy = function(pri) {
+Account.prototype.setPrivacy = function(private) {
     var that = this;
-    return Account.setPrivacy(this.session, pri) 
+    return Account.setPrivacy(this.session, private) 
         .then(function(user) {
             that._params.isPrivate = user.params.isPrivate;
             return that;

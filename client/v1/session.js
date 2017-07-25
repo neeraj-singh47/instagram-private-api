@@ -2,20 +2,21 @@ var util = require("util");
 var Resource = require("./resource");
 var fs = require('fs');
 var _ = require('underscore');
+var touch = require("touch");
 var request = require("request-promise");
-var CookieStorage = require("./cookie-storage");
-var RequestJar = require("./jar");
 
-function Session(device, storage, proxy) {
-    this.setDevice(device);    
-    this.setCookiesStorage(storage);
-    if(_.isString(proxy) && !_.isEmpty(proxy))
-        this.proxyUrl = proxy;
+function Session(device, cookiePath) {
+    if(!(device instanceof Device))
+        throw new Error("`device` is not an valid instance of `Device`");
+    this._device = device;    
+    var cookiesStore = InstgramFileCookieStore.loadFromPath(cookiePath);
+    this.setCookiesStore(cookiesStore);
 }
 
 util.inherits(Session, Resource);
 module.exports = Session;
 
+var InstgramFileCookieStore = require('./cookie-store');
 var CONSTANTS = require("./constants");
 var Account = require('./account');
 var Exceptions = require('./exceptions');
@@ -60,27 +61,19 @@ Object.defineProperty(Session.prototype, "proxyUrl", {
     get: function() { 
         return this._proxyUrl;
     },
-    set: function (val) {
-        if (!Helpers.isValidUrl(val) && val !== null)
-            throw new Error("`proxyUrl` argument is not an valid url")
+    set: function(val) {
+        if(!Helpers.isValidUrl(val) && val !== null)
+            throw new Error("`proxyUrl` argument is not an valid url") 
         this._proxyUrl = val;
     }
 });
 
 
-Session.prototype.setCookiesStorage = function (storage) {
-    if(!(storage instanceof CookieStorage))
-        throw new Error("`storage` is not an valid instance of `CookieStorage`");
-    this._cookiesStore = storage;
-    this._jar = new RequestJar(storage.store);
-    return this;
-};
-
-
-Session.prototype.setDevice = function (device) {
-    if(!(device instanceof Device))
-        throw new Error("`device` is not an valid instance of `Device`");
-    this._device = device;
+Session.prototype.setCookiesStore = function (store) {
+    if(!(store instanceof InstgramFileCookieStore))
+        throw new Error('`store` must be valid instance of InstagramFileCookieStore');
+    this._cookiesStore = store;
+    this._jar = request.jar(store);
     return this;
 };
 
@@ -110,7 +103,7 @@ Session.prototype.getAccount = function () {
 
 
 Session.prototype.destroy = function () {
-    this._cookiesStore.destroy();
+    fs.unlinkSync(this._cookiesStore.filePath);
     return new Request(this)
         .setMethod('POST')
         .setResource('logout')
@@ -118,6 +111,15 @@ Session.prototype.destroy = function () {
         .send();
 };
 
+
+Session.createFromPath = function(device, cookiePath) {
+    var session = new Session(device, cookiePath);
+    return session.cookieStore
+        .getSessionId()
+        .then(function () {
+            return session;
+        })
+}
 
 Session.login = function(session, username, password) {
     return new Request(session)
@@ -132,11 +134,10 @@ Session.login = function(session, username, password) {
         .signPayload()
         .send()
         .catch(function (error) {
-            if (error.name == "RequestError" && _.isObject(error.json)) {
-                if(error.json.invalid_credentials)
+            if (error.name == "RequestError" && 
+                _.isObject(error.json) && 
+                error.json.invalid_credentials) {
                     throw new Exceptions.AuthenticationError(error.message);
-                if(error.json.error_type==="inactive user")
-                    throw new Exceptions.AccountBanned(error.json.message+' '+error.json.help_url);
             }
             throw error;
         })
@@ -182,10 +183,10 @@ Session.login = function(session, username, password) {
         
 }
 
-Session.create = function(device, storage, username, password, proxy) {
+Session.create = function(device, cookiePath, username, password, proxy) {
     var that = this;
-    var session = new Session(device, storage);
-    if(_.isString(proxy) && !_.isEmpty(proxy))
+    var session = new Session(device, cookiePath);
+    if(_.isString(proxy))
         session.proxyUrl = proxy;
     return session.getAccountId()
         .then(function () {

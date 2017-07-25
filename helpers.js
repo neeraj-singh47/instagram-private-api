@@ -1,10 +1,12 @@
 var Helpers = {};
 var fs = require('fs');
+var touch = require("touch");
 var path = require("path");
 var touch = require("touch");
 var isStream = require("is-stream");
-var validUrl = require('valid-url');
 var _ = require("underscore");
+
+
 
 var emailTester = /^[-!#$%&'*+\/0-9=?A-Z^_a-z{|}~](\.?[-!#$%&'*+\/0-9=?A-Z^_a-z`{|}~])*@[a-zA-Z0-9](-?\.?[a-zA-Z0-9])*\.[a-zA-Z](-?[a-zA-Z0-9])+$/;
 
@@ -39,7 +41,10 @@ Helpers.buildRankToken = function (accountId) {
 };
 
 
-Helpers.isValidUrl = validUrl.isUri;
+Helpers.isValidUrl = function(textval) {
+    var urlregex = /^(https?|ftp):\/\/([a-zA-Z0-9.-]+(:[a-zA-Z0-9.&%$-]+)*@)*((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9][0-9]?)(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}|([a-zA-Z0-9-]+\.)*[a-zA-Z0-9-]+\.(com|edu|gov|int|mil|net|org|biz|arpa|info|name|pro|aero|coop|museum|[a-zA-Z]{2}))(:[0-9]+)*(\/($|[a-zA-Z0-9.,?'\\+&%$#=~_-]+))*$/;
+    return urlregex.test(textval);
+}
 
 
 Helpers.ensureExistenceOfJSONFilePath = function(path) {
@@ -75,23 +80,6 @@ Helpers.pathToStream = function (streamOrPath) {
     if(!isStream(stream))
         throw new Error("Argument is not posible to convert to stream!");
     return stream;    
-}
-
-Helpers.pathToBuffer = function(bufferOrPath){
-    return new Promise(function(resolve){
-        if(!_.isString(bufferOrPath)){
-            return callback(null,bufferOrPath)
-        }else{
-            fs.readFile(path.resolve(bufferOrPath),callback)
-        }
-
-        function callback(err,buffer){
-            if(err) throw err;
-            if(!Buffer.isBuffer(buffer))
-                throw new Error("Argument is not posible to convert to buffer!");
-            return resolve(buffer);
-        }
-    })
 }
 
 Helpers.isStream = function (stream) {
